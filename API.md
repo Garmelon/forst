@@ -1,8 +1,8 @@
 # The Forst API
 
 A client communicates with a Forst server using JSON packets over one or more
-WebSocket connections. A normal client does not need more than one connection,
-but can still use more if it is more convenient (e.g. multiple browser tabs).
+WebSocket connections. While a single connection should usually suffice, some
+clients may prefer multiple connections (e.g. multiple browser tabs).
 
 <!-- Implementing a client should be easy, especially implementing a bot. -->
 <!-- The API must be usable in the context of a web browser. -->
@@ -21,6 +21,37 @@ The connection now stays in the **roam phase** until it is closed. During this
 phase, the client can enter and exit rooms, as well as interact with other
 clients in entered rooms. The server will also send status updates (events) for
 entered rooms.
+
+## Packets
+
+The server and client communicate using packets. A packet is a textual WebSocket
+message containing a JSON object.
+
+There are three types of packets: **Events**, **commands**, and **replies**.
+
+- An **event** is sent from the server to the client whenever something happens
+  that the client should know about.
+- A **command** is sent from the client to the server. It instructs the server
+  to perform an action on behalf of the client.
+- The server must respond to a command with a **reply**. It describes the result
+  of executing the command.
+
+Every packet has a `type` field that describes the type of the packet. It must
+have one of the following values:
+
+- `"event"` if the packet is an **event**
+- `"command"` if the packet is a **command**
+- `"reply"` if the packet is a **reply**
+
+Every packet has a `name` field and a `data` field. The `name` field contains
+the name of the event or command. The `data` field contains a json object that
+is the payload of the event, command, or reply.
+
+**Command** and **reply** packets have an optional field `id` of type string
+that can be used by the client to associate replies with commands. When the
+client sends a command, it may include an arbitrary id. In its reply to the
+command, the server must include the exact same id. If the client omitted the
+id, the server must omit it as well.
 
 ## Primitive types
 
@@ -48,8 +79,6 @@ bit hexadecimal integer prefixed by `s`.
 A user id is a string matching `[a-z0-9-]+`. It is usually four characters long
 for accounts and eight characters plus a dash for other sessions, though this is
 not required. A user id uniquely identifies a user.
-
-<!-- Dashes are optional and carry no meaning. They can be added and removed at will. -->
 
 ## Auth phase commands
 
