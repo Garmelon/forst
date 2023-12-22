@@ -43,15 +43,60 @@ have one of the following values:
 - `"command"` if the packet is a **command**
 - `"reply"` if the packet is a **reply**
 
-Every packet has a `name` field and a `data` field. The `name` field contains
-the name of the event or command. The `data` field contains a json object that
-is the payload of the event, command, or reply.
+### Events
 
-**Command** and **reply** packets have an optional field `id` of type string
-that can be used by the client to associate replies with commands. When the
-client sends a command, it may include an arbitrary id. In its reply to the
-command, the server must include the exact same id. If the client omitted the
-id, the server must omit it as well.
+The `data` field contains the event's payload. Its contents depend on the `name`
+value of the event.
+
+```ts
+type EventPacket = {
+  type: "event";
+  name: string;
+  data: object;
+};
+```
+
+### Commands
+
+The `data` field contains the command's payload. Its contents depend on the
+`name` value of the command.
+
+The client can provide an optional `id` value that the server has to echo in its
+reply. This can be used to associate commands with their replies.
+
+```ts
+type CommandPacket = {
+  type: "command";
+  name: string;
+  id?: string;
+  data: object;
+};
+```
+
+### Replies
+
+The `result` field indicates whether the command was executed successfully or
+not. If it has the value `"success"`, then the server _must_ provide the `data`
+field and _must not_ provide the `error` field. If it has the value `"error"`,
+then the server _must not_ provide the `data` field and _must_ provide the
+`error` field.
+
+The `data` field, if present, contains the reply's payload. Its contents depend
+on the `name` value of the reply.
+
+If the client provided an `id` value, the reply must include the exact same id.
+If the client omitted the id, the server must omit it as well.
+
+```ts
+type ReplyPacket = {
+  type: "reply";
+  name: string;
+  id?: string;
+  result: "success" | "error";
+  data?: object;
+  error?: Error;
+};
+```
 
 ## Primitive types
 
@@ -123,38 +168,41 @@ type Message = {
 
 ```ts
 type RoomEvent =
-  | {
-      type: "enter";
-      id: EventId;
-      user: User;
-    }
-  | {
-      type: "exit";
-      id: EventId;
-      user: User;
-    }
-  | {
-      type: "user";
-      id: EventId;
-      user: User;
-    }
-  | {
-      type: "send";
-      id: EventId;
-      message: Message;
-    }
-  | {
-      type: "edit";
-      id: EventId;
-      by: User;
-      message: Message;
-    }
-  | {
-      type: "delete";
-      id: EventId;
-      by: User;
-      message: Message;
-    };
+  | { type: "enter"; id: EventId; user: User }
+  | { type: "exit"; id: EventId; user: User }
+  | { type: "user"; id: EventId; user: User }
+  | { type: "send"; id: EventId; message: Message }
+  | { type: "edit"; id: EventId; message: Message; by: User }
+  | { type: "delete"; id: EventId; message: Message; by: User };
+```
+
+### Error
+
+Error types include but are not limited to:
+
+- `bad-name`:
+  The server does not accept the display or ping name for the provided reason.
+- `bad-content`:
+  The server does not accept the message content for the provided reason.
+- `bad-message`:
+  The user is referencing a message that does not exist.
+- `insufficient-permissions`:
+  The user has insufficient permissions to execute this command.
+- `not-present`:
+  The user must be present in a room to execute this command.
+- `password`:
+  The user has tried to use an incorrect password, or has used no password where
+  a password is required.
+
+```ts
+type Error =
+  | { type: "bad-name"; reason: string }
+  | { type: "bad-content"; reason: string }
+  | { type: "bad-message"; id: MessageId }
+  | { type: "insufficient-permissions" }
+  | { type: "not-present" }
+  | { type: "password" }
+  | { type: string };
 ```
 
 ## Auth phase commands
@@ -165,7 +213,8 @@ These commands must only be sent during the auth phase.
 
 Obtain a unique user id for this session.
 
-After the client has received the reply, the connection is in the roam phase.
+After the client has received a successful reply, the connection is in the roam
+phase.
 
 ```ts
 type Command = {};
@@ -182,7 +231,8 @@ Authenticate via the cookies exchanged during the HTTP handshake portion of the
 WebSocket connection. This requires the client to store and present the cookies
 on subsequent connection handshakes.
 
-After the client has received the reply, the connection is in the roam phase.
+After the client has received a successful reply, the connection is in the roam
+phase.
 
 ```ts
 type Command = {};
@@ -200,7 +250,8 @@ and present it on subsequent connections via `auth-session-id`. The client must
 send the last known id, if any. The server may return a different id from the id
 the client sent.
 
-After the client has received the reply, the connection is in the roam phase.
+After the client has received a successful reply, the connection is in the roam
+phase.
 
 ```ts
 type Command = {
@@ -231,13 +282,19 @@ type Event = {
 
 Reasons may include, but are not limited to:
 
-- `protocol`: The client did not follow the API specification. Example: Using
-  roam commands during the auth phase.
-- `spam`: The client sent too many commands.
-- `login`: The client has logged into an account on either this connection or
-  another connection for the same session.
-- `logout`: The client has logged out of an account on either this connection or
-  another connection for the same session.
+- `login`:
+  The client has logged into an account on a either this connection or another
+  connection for the same session.
+- `logout`:
+  The client has logged out of an account on either this connection or another
+  connection for the same session.
+- `protocol`:
+  The client did not follow the API specification. Example: Using roam commands
+  during the auth phase.
+- `spam`:
+  The client sent too many commands.
+- `ban`:
+  The client has been banned.
 
 ## Roam phase commands
 
@@ -252,6 +309,10 @@ TODO Describe `logout` event
 ### `display-name`
 
 TODO Describe `display-name` event
+
+### `ping-name`
+
+TODO Describe `ping-name` event
 
 ## Roam phase room events
 
@@ -376,12 +437,6 @@ type Reply = {};
 
 Change or unset the local display name.
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
-The server may reject the command for an arbitrary reason. If so, it will return
-the result `rejected` and provide a human-readable reason in its reply.
-
 This command is idempotent.
 
 Note that this will cause a `user` event if the previous local display name was
@@ -394,30 +449,17 @@ type Command = {
   localDisplayName?: string;
 };
 
-type Reply =
-  | {
-      result: "success";
-      user: User;
-    }
-  | { result: "not-present" }
-  | {
-      result: "rejected";
-      reason: string;
-    };
+type Reply = {
+  user: User;
+};
 ```
 
 ### `send`
 
 Send a new message.
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
-The server may reject the command because the parent does not exist. If so, it
-will return the result `nonexistent-parent`.
-
-The server may reject the command for an arbitrary reason. If so, it will return
-the result `rejected` and provide a human-readable reason in its reply.
+The client may optionally include a local display name. This will override the
+local display name for this command only.
 
 This command is idempotent if a `token` value is provided.
 
@@ -426,40 +468,23 @@ Note that this will cause a `send` event.
 ```ts
 type Command = {
   room: string;
+  localDisplayName?: string;
   token?: string;
   parent?: MessageId;
   content: string;
 };
 
-type Reply =
-  | {
-      result: "success";
-      message: Message;
-    }
-  | { result: "not-present" }
-  | { result: "nonexistent-parent" }
-  | {
-      result: "rejected";
-      reason: string;
-    };
+type Reply = {
+  message: Message;
+};
 ```
 
 ### `edit`
 
 Edit a message.
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
-The server may reject the command because the user has insufficient permissions
-to edit the message. If so, it will return the result
-`insufficient-permissions`.
-
-The server may reject the command because the message does not exist. If so, it
-will return the result `nonexistent`.
-
-The server may reject the command for an arbitrary reason. If so, it will return
-the result `rejected` and provide a human-readable reason in its reply.
+The client may optionally include a local display name. This will override the
+local display name for this command only.
 
 This command is idempotent.
 
@@ -468,36 +493,24 @@ Note that this will cause an `edit` event.
 ```ts
 type Command = {
   room: string;
+  localDisplayName?: string;
   messageId: MessageId;
   content: string;
 };
 
-type Reply =
-  | {
-      result: "success";
-      message: Message;
-    }
-  | { result: "not-present" }
-  | { result: "insufficient-permissions" }
-  | { result: "nonexistent" }
-  | {
-      result: "rejected";
-      reason: string;
-    };
+type Reply = {
+  message: Message;
+};
 ```
 
 ### `delete`
 
 Delete a message.
 
+The client may optionally include a local display name. This will override the
+local display name for this command only.
+
 TODO Think through how deletion interacts with the event log.
-
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
-The server may reject the command because the user has insufficient permissions
-to delete the message. If so, it will return the result
-`insufficient-permissions`.
 
 This command is idempotent. Deleting a non-existent message does not result in
 an error.
@@ -507,13 +520,12 @@ Note that this will cause a `delete` event.
 ```ts
 type Command = {
   room: string;
+  localDisplayName?: string;
   messageId: MessageId;
   content: string;
 };
 
-type Reply = {
-  result: "success" | "not-present" | "insufficient-permissions";
-};
+type Reply = {};
 ```
 
 ### `get-users`
@@ -523,9 +535,6 @@ Request a list of users currently present in a room.
 This may be useful for clients like bots that don't want to track who is present
 or not.
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
 This command is idempotent because it has no server-side effects.
 
 ```ts
@@ -533,12 +542,9 @@ type Command = {
   room: string;
 };
 
-type Reply =
-  | {
-      result: "success";
-      users: User[];
-    }
-  | { result: "not-present" };
+type Reply = {
+  users: User[];
+};
 ```
 
 ### `get-message`
@@ -550,12 +556,6 @@ TODO Consider whether this should include previous edits
 This may be useful for clients like bots that don't want to store the entire
 message history.
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
-The server may reject the command because the message does not exist. If so, it
-will return the result `nonexistent`.
-
 This command is idempotent because it has no server-side effects.
 
 ```ts
@@ -563,13 +563,9 @@ type Command = {
   room: string;
 };
 
-type Reply =
-  | {
-      result: "success";
-      message: Message;
-    }
-  | { result: "not-present" }
-  | { result: "nonexistent" };
+type Reply = {
+  message: Message;
+};
 ```
 
 ### `get-threads`
@@ -583,9 +579,6 @@ If a message id is specified, the youngest few threads before the id are
 returned. Otherwise, the youngest few threads are returned. Returned threads are
 always consecutive and ordered ascending by id (old to young).
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
 ```ts
 type Command = {
   room: string;
@@ -593,12 +586,9 @@ type Command = {
   before?: MessageId;
 };
 
-type Reply =
-  | {
-      result: "success";
-      messages: Message[];
-    }
-  | { result: "not-present" };
+type Reply = {
+  messages: Message[];
+};
 ```
 
 ### `get-events`
@@ -612,9 +602,6 @@ If an event id is specified, the youngest few events before the id are returned.
 Otherwise, the youngest few events are returned. Returned events are always
 consecutive and ordered ascending by id (old to young).
 
-The server may reject the command because the user is not in the specified room.
-If so, it will return the result `not-present`.
-
 ```ts
 type Command = {
   room: string;
@@ -622,10 +609,7 @@ type Command = {
   before?: MessageId;
 };
 
-type Reply =
-  | {
-      result: "success";
-      events: RoomEvent[];
-    }
-  | { result: "not-present" };
+type Reply = {
+  events: RoomEvent[];
+};
 ```
